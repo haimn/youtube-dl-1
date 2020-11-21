@@ -36,6 +36,7 @@ from .afreecatv import AfreecaTVIE
 from .airmozilla import AirMozillaIE
 from .aljazeera import AlJazeeraIE
 from .alphaporno import AlphaPornoIE
+from .amara import AmaraIE
 from .amcnetworks import AMCNetworksIE
 from .americastestkitchen import AmericasTestKitchenIE
 from .animeondemand import AnimeOnDemandIE
@@ -58,7 +59,7 @@ from .ard import (
     ARDMediathekIE,
 )
 from .arte import (
-    ArteTVPlus7IE,
+    ArteTVIE,
     ArteTVEmbedIE,
     ArteTVPlaylistIE,
 )
@@ -529,6 +530,7 @@ from .laola1tv import (
     EHFTVIE,
     ITTFIE,
 )
+from .lbry import LBRYIE
 from .lci import LCIIE
 from .lcp import (
     LcpPlayIE,
@@ -918,7 +920,9 @@ from .rbmaradio import RBMARadioIE
 from .rds import RDSIE
 from .redbulltv import (
     RedBullTVIE,
+    RedBullEmbedIE,
     RedBullTVRrnContentIE,
+    RedBullIE,
 )
 from .reddit import (
     RedditIE,
@@ -1052,8 +1056,7 @@ from .spankbang import (
     SpankBangPlaylistIE,
 )
 from .spankwire import SpankwireIE
-from .spiegel import SpiegelIE, SpiegelArticleIE
-from .spiegeltv import SpiegeltvIE
+from .spiegel import SpiegelIE
 from .spike import (
     BellatorIE,
     ParamountNetworkIE,
@@ -1230,14 +1233,11 @@ from .twentymin import TwentyMinutenIE
 from .twentythreevideo import TwentyThreeVideoIE
 from .twitcasting import TwitCastingIE
 from .twitch import (
-    TwitchVideoIE,
-    TwitchChapterIE,
     TwitchVodIE,
-    TwitchProfileIE,
-    TwitchAllVideosIE,
-    TwitchUploadsIE,
-    TwitchPastBroadcastsIE,
-    TwitchHighlightsIE,
+    TwitchCollectionIE,
+    TwitchVideosIE,
+    TwitchVideosClipsIE,
+    TwitchVideosCollectionsIE,
     TwitchStreamIE,
     TwitchClipsIE,
 )
@@ -1359,7 +1359,6 @@ from .vk import (
 from .vlive import (
     VLiveIE,
     VLiveChannelIE,
-    VLivePlaylistIE
 )
 from .vodlocker import VodlockerIE
 from .vodpl import VODPlIE
@@ -1476,21 +1475,17 @@ from .yourporn import YourPornIE
 from .yourupload import YourUploadIE
 from .youtube import (
     YoutubeIE,
-    YoutubeChannelIE,
-    YoutubeFavouritesIE,
     YoutubeHistoryIE,
-    YoutubeLiveIE,
+    YoutubeTabIE,
     YoutubePlaylistIE,
-    YoutubePlaylistsIE,
     YoutubeRecommendedIE,
     YoutubeSearchDateIE,
     YoutubeSearchIE,
-    YoutubeSearchURLIE,
-    YoutubeShowIE,
+    #YoutubeSearchURLIE,
     YoutubeSubscriptionsIE,
     YoutubeTruncatedIDIE,
     YoutubeTruncatedURLIE,
-    YoutubeUserIE,
+    YoutubeYtUserIE,
     YoutubeWatchLaterIE,
 )
 from .zapiks import ZapiksIE
