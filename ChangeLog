@@ -1,3 +1,41 @@
+version 2020.11.26
+
+Core
+* [downloader/fragment] Set final file's mtime according to last fragment's
+  Last-Modified header (#11718, #18384, #27138)
+
+Extractors
++ [spreaker] Add support for spreaker.com (#13480, #13877)
+* [vlive] Improve extraction for geo-restricted videos
++ [vlive] Add support for post URLs (#27122, #27123)
+* [viki] Fix video API request (#27184)
+* [bbc] Fix BBC Three clip extraction
+* [bbc] Fix BBC News videos extraction
++ [medaltv] Add support for medal.tv (#27149)
+* [youtube] Imporve music metadata and license extraction (#26013)
+* [nrk] Fix extraction
+* [cda] Fix extraction (#17803, #24458, #24518, #26381)
+
+
+version 2020.11.24
+
+Core
++ [extractor/common] Add generic support for akamai HTTP format extraction
+
+Extractors
+* [youtube:tab] Fix feeds extraction (#25695, #26452)
+* [youtube:favorites] Restore extractor
+* [youtube:tab] Fix some weird typo (#27157)
++ [pinterest] Add support for large collections (more than 25 pins)
++ [franceinter] Extract thumbnail (#27153)
++ [box] Add support for box.com (#5949)
++ [nytimes] Add support for cooking.nytimes.com (#27112, #27143)
+* [lbry] Relax URL regular expression (#27144)
++ [rumble] Add support for embed pages (#10785)
++ [skyit] Add support for multiple Sky Italia websites (#26629)
++ [pinterest] Add support for pinterest.com (#25747)
+
+
 version 2020.11.21.1
 
 Core
