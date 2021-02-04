@@ -16,6 +16,7 @@ from ..jsinterp import JSInterpreter
 from ..swfinterp import SWFInterpreter
 from ..compat import (
     compat_chr,
+    compat_HTTPError,
     compat_parse_qs,
     compat_urllib_parse_unquote,
     compat_urllib_parse_unquote_plus,
@@ -66,11 +67,6 @@ class YoutubeBaseInfoExtractor(InfoExtractor):
     _LOGIN_REQUIRED = False
 
     _PLAYLIST_ID_RE = r'(?:(?:PL|LL|EC|UU|FL|RD|UL|TL|PU|OLAK5uy_)[0-9A-Za-z-_]{10,}|RDMM)'
-
-    _YOUTUBE_CLIENT_HEADERS = {
-        'x-youtube-client-name': '1',
-        'x-youtube-client-version': '1.20200609.04.02',
-    }
 
     def _set_language(self):
         self._set_cookie(
@@ -283,6 +279,8 @@ class YoutubeBaseInfoExtractor(InfoExtractor):
     }
 
     _YT_INITIAL_DATA_RE = r'(?:window\s*\[\s*["\']ytInitialData["\']\s*\]|ytInitialData)\s*=\s*({.+?})\s*;'
+    _YT_INITIAL_PLAYER_RESPONSE_RE = r'ytInitialPlayerResponse\s*=\s*({.+?})\s*;'
+    _YT_INITIAL_BOUNDARY_RE = r'(?:var\s+meta|</script|\n)'
 
     def _call_api(self, ep, query, video_id):
         data = self._DEFAULT_API_DATA.copy()
@@ -300,9 +298,45 @@ class YoutubeBaseInfoExtractor(InfoExtractor):
     def _extract_yt_initial_data(self, video_id, webpage):
         return self._parse_json(
             self._search_regex(
-                (r'%s\s*\n' % self._YT_INITIAL_DATA_RE,
+                (r'%s\s*%s' % (self._YT_INITIAL_DATA_RE, self._YT_INITIAL_BOUNDARY_RE),
                  self._YT_INITIAL_DATA_RE), webpage, 'yt initial data'),
             video_id)
+
+    def _extract_ytcfg(self, video_id, webpage):
+        return self._parse_json(
+            self._search_regex(
+                r'ytcfg\.set\s*\(\s*({.+?})\s*\)\s*;', webpage, 'ytcfg',
+                default='{}'), video_id, fatal=False)
+
+    def _extract_video(self, renderer):
+        video_id = renderer['videoId']
+        title = try_get(
+            renderer,
+            (lambda x: x['title']['runs'][0]['text'],
+             lambda x: x['title']['simpleText']), compat_str)
+        description = try_get(
+            renderer, lambda x: x['descriptionSnippet']['runs'][0]['text'],
+            compat_str)
+        duration = parse_duration(try_get(
+            renderer, lambda x: x['lengthText']['simpleText'], compat_str))
+        view_count_text = try_get(
+            renderer, lambda x: x['viewCountText']['simpleText'], compat_str) or ''
+        view_count = str_to_int(self._search_regex(
+            r'^([\d,]+)', re.sub(r'\s', '', view_count_text),
+            'view count', default=None))
+        uploader = try_get(
+            renderer, lambda x: x['ownerText']['runs'][0]['text'], compat_str)
+        return {
+            '_type': 'url_transparent',
+            'ie_key': YoutubeIE.ie_key(),
+            'id': video_id,
+            'url': video_id,
+            'title': title,
+            'description': description,
+            'duration': duration,
+            'view_count': view_count,
+            'uploader': uploader,
+        }
 
 
 class YoutubeIE(YoutubeBaseInfoExtractor):
@@ -319,14 +353,22 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                             # Invidious instances taken from https://github.com/omarroth/invidious/wiki/Invidious-Instances
                             (?:(?:www|dev)\.)?invidio\.us/|
                             (?:(?:www|no)\.)?invidiou\.sh/|
-                            (?:(?:www|fi|de)\.)?invidious\.snopyta\.org/|
+                            (?:(?:www|fi)\.)?invidious\.snopyta\.org/|
                             (?:www\.)?invidious\.kabi\.tk/|
                             (?:www\.)?invidious\.13ad\.de/|
                             (?:www\.)?invidious\.mastodon\.host/|
+                            (?:www\.)?invidious\.zapashcanon\.fr/|
+                            (?:www\.)?invidious\.kavin\.rocks/|
+                            (?:www\.)?invidious\.tube/|
+                            (?:www\.)?invidiou\.site/|
+                            (?:www\.)?invidious\.site/|
+                            (?:www\.)?invidious\.xyz/|
                             (?:www\.)?invidious\.nixnet\.xyz/|
                             (?:www\.)?invidious\.drycat\.fr/|
                             (?:www\.)?tube\.poal\.co/|
+                            (?:www\.)?tube\.connect\.cafe/|
                             (?:www\.)?vid\.wxzm\.sx/|
+                            (?:www\.)?vid\.mint\.lgbt/|
                             (?:www\.)?yewtu\.be/|
                             (?:www\.)?yt\.elukerio\.org/|
                             (?:www\.)?yt\.lelux\.fi/|
@@ -601,7 +643,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 'description': 'SUBSCRIBE: http://www.youtube.com/saturninefilms\n\nEven Obama has taken a stand against freedom on this issue: http://www.huffingtonpost.com/2010/09/09/obama-gma-interview-quran_n_710282.html',
             }
         },
-        # Normal age-gate video (No vevo, embed allowed)
+        # Normal age-gate video (No vevo, embed allowed), available via embed page
         {
             'url': 'https://youtube.com/watch?v=HtVdAasjOgU',
             'info_dict': {
@@ -616,6 +658,12 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 'upload_date': '20140605',
                 'age_limit': 18,
             },
+        },
+        {
+            # Age-gated video only available with authentication (unavailable
+            # via embed page workaround)
+            'url': 'XgnwCQzjau8',
+            'only_matching': True,
         },
         # video_info is None (https://github.com/ytdl-org/youtube-dl/issues/4421)
         # YouTube Red ad is not captured for creator
@@ -1068,7 +1116,10 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             },
         },
         {
-            # with '};' inside yt initial data (see https://github.com/ytdl-org/youtube-dl/issues/27093)
+            # with '};' inside yt initial data (see [1])
+            # see [2] for an example with '};' inside ytInitialPlayerResponse
+            # 1. https://github.com/ytdl-org/youtube-dl/issues/27093
+            # 2. https://github.com/ytdl-org/youtube-dl/issues/27216
             'url': 'https://www.youtube.com/watch?v=CHqg6qOn4no',
             'info_dict': {
                 'id': 'CHqg6qOn4no',
@@ -1082,6 +1133,15 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             'params': {
                 'skip_download': True,
             },
+        },
+        {
+            # another example of '};' in ytInitialData
+            'url': 'https://www.youtube.com/watch?v=gVfgbahppCY',
+            'only_matching': True,
+        },
+        {
+            'url': 'https://www.youtube.com/watch_popup?v=63RmMXCd_bQ',
+            'only_matching': True,
         },
     ]
 
@@ -1303,17 +1363,16 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             return self._parse_json(
                 uppercase_escape(config), video_id, fatal=False)
 
-    def _get_automatic_captions(self, video_id, webpage):
+    def _get_automatic_captions(self, video_id, player_response, player_config):
         """We need the webpage for getting the captions url, pass it as an
            argument to speed up the process."""
         self.to_screen('%s: Looking for automatic captions' % video_id)
-        player_config = self._get_ytplayer_config(video_id, webpage)
         err_msg = 'Couldn\'t find automatic captions for %s' % video_id
-        if not player_config:
+        if not (player_response or player_config):
             self._downloader.report_warning(err_msg)
             return {}
         try:
-            args = player_config['args']
+            args = player_config.get('args') if player_config else {}
             caption_url = args.get('ttsurl')
             if caption_url:
                 timestamp = args['timestamp']
@@ -1372,19 +1431,15 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 return captions
 
             # New captions format as of 22.06.2017
-            player_response = args.get('player_response')
-            if player_response and isinstance(player_response, compat_str):
-                player_response = self._parse_json(
-                    player_response, video_id, fatal=False)
-                if player_response:
-                    renderer = player_response['captions']['playerCaptionsTracklistRenderer']
-                    base_url = renderer['captionTracks'][0]['baseUrl']
-                    sub_lang_list = []
-                    for lang in renderer['translationLanguages']:
-                        lang_code = lang.get('languageCode')
-                        if lang_code:
-                            sub_lang_list.append(lang_code)
-                    return make_captions(base_url, sub_lang_list)
+            if player_response:
+                renderer = player_response['captions']['playerCaptionsTracklistRenderer']
+                base_url = renderer['captionTracks'][0]['baseUrl']
+                sub_lang_list = []
+                for lang in renderer['translationLanguages']:
+                    lang_code = lang.get('languageCode')
+                    if lang_code:
+                        sub_lang_list.append(lang_code)
+                return make_captions(base_url, sub_lang_list)
 
             # Some videos don't provide ttsurl but rather caption_tracks and
             # caption_translation_languages (e.g. 20LmZk1hakA)
@@ -1633,8 +1688,9 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         # Get video info
         video_info = {}
         embed_webpage = None
-        if (self._og_search_property('restrictions:age', video_webpage, default=None) == '18+'
-                or re.search(r'player-age-gate-content">', video_webpage) is not None):
+        ytplayer_config = None
+
+        if re.search(r'["\']status["\']\s*:\s*["\']LOGIN_REQUIRED', video_webpage) is not None:
             age_gate = True
             # We simulate the access to the video from www.youtube.com/v/{video_id}
             # this can be viewed without login into Youtube
@@ -1686,7 +1742,8 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         if not video_info and not player_response:
             player_response = extract_player_response(
                 self._search_regex(
-                    r'ytInitialPlayerResponse\s*=\s*({.+?})\s*;', video_webpage,
+                    (r'%s\s*%s' % (self._YT_INITIAL_PLAYER_RESPONSE_RE, self._YT_INITIAL_BOUNDARY_RE),
+                     self._YT_INITIAL_PLAYER_RESPONSE_RE), video_webpage,
                     'initial player response', default='{}'),
                 video_id)
 
@@ -2256,7 +2313,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
 
         # subtitles
         video_subtitles = self.extract_subtitles(video_id, video_webpage)
-        automatic_captions = self.extract_automatic_captions(video_id, video_webpage)
+        automatic_captions = self.extract_automatic_captions(video_id, player_response, ytplayer_config)
 
         video_duration = try_get(
             video_info, lambda x: int_or_none(x['length_seconds'][0]))
@@ -2269,16 +2326,25 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         # annotations
         video_annotations = None
         if self._downloader.params.get('writeannotations', False):
-            xsrf_token = self._search_regex(
-                r'([\'"])XSRF_TOKEN\1\s*:\s*([\'"])(?P<xsrf_token>[A-Za-z0-9+/=]+)\2',
-                video_webpage, 'xsrf token', group='xsrf_token', fatal=False)
+            xsrf_token = None
+            ytcfg = self._extract_ytcfg(video_id, video_webpage)
+            if ytcfg:
+                xsrf_token = try_get(ytcfg, lambda x: x['XSRF_TOKEN'], compat_str)
+            if not xsrf_token:
+                xsrf_token = self._search_regex(
+                    r'([\'"])XSRF_TOKEN\1\s*:\s*([\'"])(?P<xsrf_token>(?:(?!\2).)+)\2',
+                    video_webpage, 'xsrf token', group='xsrf_token', fatal=False)
             invideo_url = try_get(
                 player_response, lambda x: x['annotations'][0]['playerAnnotationsUrlsRenderer']['invideoUrl'], compat_str)
             if xsrf_token and invideo_url:
-                xsrf_field_name = self._search_regex(
-                    r'([\'"])XSRF_FIELD_NAME\1\s*:\s*([\'"])(?P<xsrf_field_name>\w+)\2',
-                    video_webpage, 'xsrf field name',
-                    group='xsrf_field_name', default='session_token')
+                xsrf_field_name = None
+                if ytcfg:
+                    xsrf_field_name = try_get(ytcfg, lambda x: x['XSRF_FIELD_NAME'], compat_str)
+                if not xsrf_field_name:
+                    xsrf_field_name = self._search_regex(
+                        r'([\'"])XSRF_FIELD_NAME\1\s*:\s*([\'"])(?P<xsrf_field_name>\w+)\2',
+                        video_webpage, 'xsrf field name',
+                        group='xsrf_field_name', default='session_token')
                 video_annotations = self._download_webpage(
                     self._proto_relative_url(invideo_url),
                     video_id, note='Downloading annotations',
@@ -2417,7 +2483,8 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
                         )/
                         (?:
                             (?:channel|c|user|feed)/|
-                            (?:playlist|watch)\?.*?\blist=
+                            (?:playlist|watch)\?.*?\blist=|
+                            (?!(?:watch|embed|v|e)\b)
                         )
                         (?P<id>[^/?\#&]+)
                     '''
@@ -2682,13 +2749,31 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
         # no longer available?
         'url': 'https://www.youtube.com/feed/recommended',
         'only_matching': True,
-    }
-        # TODO
-        # {
-        #     'url': 'https://www.youtube.com/TheYoungTurks/live',
-        #     'only_matching': True,
-        # }
-    ]
+    }, {
+        # inline playlist with not always working continuations
+        'url': 'https://www.youtube.com/watch?v=UC6u0Tct-Fo&list=PL36D642111D65BE7C',
+        'only_matching': True,
+    }, {
+        'url': 'https://www.youtube.com/course?list=ECUl4u3cNGP61MdtwGTqZA0MreSaDybji8',
+        'only_matching': True,
+    }, {
+        'url': 'https://www.youtube.com/course',
+        'only_matching': True,
+    }, {
+        'url': 'https://www.youtube.com/zsecurity',
+        'only_matching': True,
+    }, {
+        'url': 'http://www.youtube.com/NASAgovVideo/videos',
+        'only_matching': True,
+    }, {
+        'url': 'https://www.youtube.com/TheYoungTurks/live',
+        'only_matching': True,
+    }]
+
+    @classmethod
+    def suitable(cls, url):
+        return False if YoutubeIE.suitable(url) else super(
+            YoutubeTabIE, cls).suitable(url)
 
     def _extract_channel_id(self, webpage):
         channel_id = self._html_search_meta(
@@ -2709,36 +2794,6 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
             renderer = item.get('grid%sRenderer' % item_kind)
             if renderer:
                 return renderer
-
-    def _extract_video(self, renderer):
-        video_id = renderer.get('videoId')
-        title = try_get(
-            renderer,
-            (lambda x: x['title']['runs'][0]['text'],
-             lambda x: x['title']['simpleText']), compat_str)
-        description = try_get(
-            renderer, lambda x: x['descriptionSnippet']['runs'][0]['text'],
-            compat_str)
-        duration = parse_duration(try_get(
-            renderer, lambda x: x['lengthText']['simpleText'], compat_str))
-        view_count_text = try_get(
-            renderer, lambda x: x['viewCountText']['simpleText'], compat_str) or ''
-        view_count = str_to_int(self._search_regex(
-            r'^([\d,]+)', re.sub(r'\s', '', view_count_text),
-            'view count', default=None))
-        uploader = try_get(
-            renderer, lambda x: x['ownerText']['runs'][0]['text'], compat_str)
-        return {
-            '_type': 'url_transparent',
-            'ie_key': YoutubeIE.ie_key(),
-            'id': video_id,
-            'url': video_id,
-            'title': title,
-            'description': description,
-            'duration': duration,
-            'view_count': view_count,
-            'uploader': uploader,
-        }
 
     def _grid_entries(self, grid_renderer):
         for item in grid_renderer['items']:
@@ -2785,12 +2840,17 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
             # TODO
             pass
 
-    def _shelf_entries(self, shelf_renderer):
+    def _shelf_entries(self, shelf_renderer, skip_channels=False):
         ep = try_get(
             shelf_renderer, lambda x: x['endpoint']['commandMetadata']['webCommandMetadata']['url'],
             compat_str)
         shelf_url = urljoin('https://www.youtube.com', ep)
         if shelf_url:
+            # Skipping links to another channels, note that checking for
+            # endpoint.commandMetadata.webCommandMetadata.webPageTypwebPageType == WEB_PAGE_TYPE_CHANNEL
+            # will not work
+            if skip_channels and '/channels?' in shelf_url:
+                return
             title = try_get(
                 shelf_renderer, lambda x: x['title']['runs'][0]['text'], compat_str)
             yield self.url_result(shelf_url, video_title=title)
@@ -2856,6 +2916,16 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
                 yield entry
 
     @staticmethod
+    def _build_continuation_query(continuation, ctp=None):
+        query = {
+            'ctoken': continuation,
+            'continuation': continuation,
+        }
+        if ctp:
+            query['itct'] = ctp
+        return query
+
+    @staticmethod
     def _extract_next_continuation_data(renderer):
         next_continuation = try_get(
             renderer, lambda x: x['continuations'][0]['nextContinuationData'], dict)
@@ -2865,11 +2935,7 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
         if not continuation:
             return
         ctp = next_continuation.get('clickTrackingParams')
-        return {
-            'ctoken': continuation,
-            'continuation': continuation,
-            'itct': ctp,
-        }
+        return YoutubeTabIE._build_continuation_query(continuation, ctp)
 
     @classmethod
     def _extract_continuation(cls, renderer):
@@ -2892,18 +2958,16 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
             if not continuation:
                 continue
             ctp = continuation_ep.get('clickTrackingParams')
-            if not ctp:
-                continue
-            return {
-                'ctoken': continuation,
-                'continuation': continuation,
-                'itct': ctp,
-            }
+            return YoutubeTabIE._build_continuation_query(continuation, ctp)
 
     def _entries(self, tab, identity_token):
-        slr_renderer = try_get(tab, lambda x: x['sectionListRenderer'], dict)
+        tab_content = try_get(tab, lambda x: x['content'], dict)
+        if not tab_content:
+            return
+        slr_renderer = try_get(tab_content, lambda x: x['sectionListRenderer'], dict)
         if not slr_renderer:
             return
+        is_channels_tab = tab.get('title') == 'Channels'
         continuation = None
         slr_contents = try_get(slr_renderer, lambda x: x['contents'], list) or []
         for slr_content in slr_contents:
@@ -2930,7 +2994,7 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
                     continue
                 renderer = isr_content.get('shelfRenderer')
                 if renderer:
-                    for entry in self._shelf_entries(renderer):
+                    for entry in self._shelf_entries(renderer, not is_channels_tab):
                         yield entry
                     continue
                 renderer = isr_content.get('backstagePostThreadRenderer')
@@ -2961,10 +3025,24 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
         for page_num in itertools.count(1):
             if not continuation:
                 break
-            browse = self._download_json(
-                'https://www.youtube.com/browse_ajax', None,
-                'Downloading page %d' % page_num,
-                headers=headers, query=continuation, fatal=False)
+            count = 0
+            retries = 3
+            while count <= retries:
+                try:
+                    # Downloading page may result in intermittent 5xx HTTP error
+                    # that is usually worked around with a retry
+                    browse = self._download_json(
+                        'https://www.youtube.com/browse_ajax', None,
+                        'Downloading page %d%s'
+                        % (page_num, ' (retry #%d)' % count if count else ''),
+                        headers=headers, query=continuation)
+                    break
+                except ExtractorError as e:
+                    if isinstance(e.cause, compat_HTTPError) and e.cause.code in (500, 503):
+                        count += 1
+                        if count <= retries:
+                            continue
+                    raise
             if not browse:
                 break
             response = try_get(browse, lambda x: x[1]['response'], dict)
@@ -3040,6 +3118,24 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
                         try_get(owner, lambda x: x['navigationEndpoint']['browseEndpoint']['canonicalBaseUrl'], compat_str))
         return uploader
 
+    @staticmethod
+    def _extract_alert(data):
+        alerts = []
+        for alert in try_get(data, lambda x: x['alerts'], list) or []:
+            if not isinstance(alert, dict):
+                continue
+            alert_text = try_get(
+                alert, lambda x: x['alertRenderer']['text'], dict)
+            if not alert_text:
+                continue
+            text = try_get(
+                alert_text,
+                (lambda x: x['simpleText'], lambda x: x['runs'][0]['text']),
+                compat_str)
+            if text:
+                alerts.append(text)
+        return '\n'.join(alerts)
+
     def _extract_from_tabs(self, item_id, webpage, data, tabs, identity_token):
         selected_tab = self._extract_selected_tab(tabs)
         renderer = try_get(
@@ -3060,19 +3156,39 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
             description = None
             playlist_id = item_id
         playlist = self.playlist_result(
-            self._entries(selected_tab['content'], identity_token),
+            self._entries(selected_tab, identity_token),
             playlist_id=playlist_id, playlist_title=title,
             playlist_description=description)
         playlist.update(self._extract_uploader(data))
         return playlist
 
-    def _extract_from_playlist(self, item_id, data, playlist):
+    def _extract_from_playlist(self, item_id, url, data, playlist):
         title = playlist.get('title') or try_get(
             data, lambda x: x['titleText']['simpleText'], compat_str)
         playlist_id = playlist.get('playlistId') or item_id
+        # Inline playlist rendition continuation does not always work
+        # at Youtube side, so delegating regular tab-based playlist URL
+        # processing whenever possible.
+        playlist_url = urljoin(url, try_get(
+            playlist, lambda x: x['endpoint']['commandMetadata']['webCommandMetadata']['url'],
+            compat_str))
+        if playlist_url and playlist_url != url:
+            return self.url_result(
+                playlist_url, ie=YoutubeTabIE.ie_key(), video_id=playlist_id,
+                video_title=title)
         return self.playlist_result(
             self._playlist_entries(playlist), playlist_id=playlist_id,
             playlist_title=title)
+
+    def _extract_identity_token(self, webpage, item_id):
+        ytcfg = self._extract_ytcfg(item_id, webpage)
+        if ytcfg:
+            token = try_get(ytcfg, lambda x: x['ID_TOKEN'], compat_str)
+            if token:
+                return token
+        return self._search_regex(
+            r'\bID_TOKEN["\']\s*:\s*["\'](.+?)["\']', webpage,
+            'identity token', default=None)
 
     def _real_extract(self, url):
         item_id = self._match_id(url)
@@ -3088,9 +3204,7 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
                 return self.url_result(video_id, ie=YoutubeIE.ie_key(), video_id=video_id)
             self.to_screen('Downloading playlist %s - add --no-playlist to just download video %s' % (playlist_id, video_id))
         webpage = self._download_webpage(url, item_id)
-        identity_token = self._search_regex(
-            r'\bID_TOKEN["\']\s*:\s*["\'](.+?)["\']', webpage,
-            'identity token', default=None)
+        identity_token = self._extract_identity_token(webpage, item_id)
         data = self._extract_yt_initial_data(item_id, webpage)
         tabs = try_get(
             data, lambda x: x['contents']['twoColumnBrowseResultsRenderer']['tabs'], list)
@@ -3099,7 +3213,7 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
         playlist = try_get(
             data, lambda x: x['contents']['twoColumnWatchNextResults']['playlist']['playlist'], dict)
         if playlist:
-            return self._extract_from_playlist(item_id, data, playlist)
+            return self._extract_from_playlist(item_id, url, data, playlist)
         # Fallback to video extraction if no playlist alike page is recognized.
         # First check for the current video then try the v attribute of URL query.
         video_id = try_get(
@@ -3107,6 +3221,10 @@ class YoutubeTabIE(YoutubeBaseInfoExtractor):
             compat_str) or video_id
         if video_id:
             return self.url_result(video_id, ie=YoutubeIE.ie_key(), video_id=video_id)
+        # Capture and output alerts
+        alert = self._extract_alert(data)
+        if alert:
+            raise ExtractorError(alert, expected=True)
         # Failed to recognize
         raise ExtractorError('Unable to recognize tab page')
 
@@ -3119,8 +3237,7 @@ class YoutubePlaylistIE(InfoExtractor):
                         (?:
                             (?:
                                 youtube(?:kids)?\.com|
-                                invidio\.us|
-                                youtu\.be
+                                invidio\.us
                             )
                             /.*?\?.*?\blist=
                         )?
@@ -3165,6 +3282,32 @@ class YoutubePlaylistIE(InfoExtractor):
             'uploader_id': 'UC21nz3_MesPLqtDqwdvnoxA',
         }
     }, {
+        'url': 'TLGGrESM50VT6acwMjAyMjAxNw',
+        'only_matching': True,
+    }, {
+        # music album playlist
+        'url': 'OLAK5uy_m4xAFdmMC5rX3Ji3g93pQe3hqLZw_9LhM',
+        'only_matching': True,
+    }]
+
+    @classmethod
+    def suitable(cls, url):
+        return False if YoutubeTabIE.suitable(url) else super(
+            YoutubePlaylistIE, cls).suitable(url)
+
+    def _real_extract(self, url):
+        playlist_id = self._match_id(url)
+        qs = compat_urlparse.parse_qs(compat_urlparse.urlparse(url).query)
+        if not qs:
+            qs = {'list': playlist_id}
+        return self.url_result(
+            update_url_query('https://www.youtube.com/playlist', qs),
+            ie=YoutubeTabIE.ie_key(), video_id=playlist_id)
+
+
+class YoutubeYtBeIE(InfoExtractor):
+    _VALID_URL = r'https?://youtu\.be/(?P<id>[0-9A-Za-z_-]{11})/*?.*?\blist=(?P<playlist_id>%(playlist_id)s)' % {'playlist_id': YoutubeBaseInfoExtractor._PLAYLIST_ID_RE}
+    _TESTS = [{
         'url': 'https://youtu.be/yeWKywCrFtk?list=PL2qgrgXsNUG5ig9cat4ohreBjYLAPC0J5',
         'info_dict': {
             'id': 'yeWKywCrFtk',
@@ -3187,28 +3330,18 @@ class YoutubePlaylistIE(InfoExtractor):
     }, {
         'url': 'https://youtu.be/uWyaPkt-VOI?list=PL9D9FC436B881BA21',
         'only_matching': True,
-    }, {
-        'url': 'TLGGrESM50VT6acwMjAyMjAxNw',
-        'only_matching': True,
-    }, {
-        # music album playlist
-        'url': 'OLAK5uy_m4xAFdmMC5rX3Ji3g93pQe3hqLZw_9LhM',
-        'only_matching': True,
     }]
 
-    @classmethod
-    def suitable(cls, url):
-        return False if YoutubeTabIE.suitable(url) else super(
-            YoutubePlaylistIE, cls).suitable(url)
-
     def _real_extract(self, url):
-        playlist_id = self._match_id(url)
-        qs = compat_urlparse.parse_qs(compat_urlparse.urlparse(url).query)
-        if not qs:
-            qs = {'list': playlist_id}
+        mobj = re.match(self._VALID_URL, url)
+        video_id = mobj.group('id')
+        playlist_id = mobj.group('playlist_id')
         return self.url_result(
-            update_url_query('https://www.youtube.com/playlist', qs),
-            ie=YoutubeTabIE.ie_key(), video_id=playlist_id)
+            update_url_query('https://www.youtube.com/watch', {
+                'v': video_id,
+                'list': playlist_id,
+                'feature': 'youtu.be',
+            }), ie=YoutubeTabIE.ie_key(), video_id=playlist_id)
 
 
 class YoutubeYtUserIE(InfoExtractor):
@@ -3284,46 +3417,29 @@ class YoutubeSearchIE(SearchInfoExtractor, YoutubeBaseInfoExtractor):
                 list)
             if not slr_contents:
                 break
-            isr_contents = try_get(
-                slr_contents,
-                lambda x: x[0]['itemSectionRenderer']['contents'],
-                list)
-            if not isr_contents:
-                break
-            for content in isr_contents:
-                if not isinstance(content, dict):
+            for slr_content in slr_contents:
+                isr_contents = try_get(
+                    slr_content,
+                    lambda x: x['itemSectionRenderer']['contents'],
+                    list)
+                if not isr_contents:
                     continue
-                video = content.get('videoRenderer')
-                if not isinstance(video, dict):
-                    continue
-                video_id = video.get('videoId')
-                if not video_id:
-                    continue
-                title = try_get(video, lambda x: x['title']['runs'][0]['text'], compat_str)
-                description = try_get(video, lambda x: x['descriptionSnippet']['runs'][0]['text'], compat_str)
-                duration = parse_duration(try_get(video, lambda x: x['lengthText']['simpleText'], compat_str))
-                view_count_text = try_get(video, lambda x: x['viewCountText']['simpleText'], compat_str) or ''
-                view_count = int_or_none(self._search_regex(
-                    r'^(\d+)', re.sub(r'\s', '', view_count_text),
-                    'view count', default=None))
-                uploader = try_get(video, lambda x: x['ownerText']['runs'][0]['text'], compat_str)
-                total += 1
-                yield {
-                    '_type': 'url_transparent',
-                    'ie_key': YoutubeIE.ie_key(),
-                    'id': video_id,
-                    'url': video_id,
-                    'title': title,
-                    'description': description,
-                    'duration': duration,
-                    'view_count': view_count,
-                    'uploader': uploader,
-                }
-                if total == n:
-                    return
+                for content in isr_contents:
+                    if not isinstance(content, dict):
+                        continue
+                    video = content.get('videoRenderer')
+                    if not isinstance(video, dict):
+                        continue
+                    video_id = video.get('videoId')
+                    if not video_id:
+                        continue
+                    yield self._extract_video(video)
+                    total += 1
+                    if total == n:
+                        return
             token = try_get(
                 slr_contents,
-                lambda x: x[1]['continuationItemRenderer']['continuationEndpoint']['continuationCommand']['token'],
+                lambda x: x[-1]['continuationItemRenderer']['continuationEndpoint']['continuationCommand']['token'],
                 compat_str)
             if not token:
                 break
